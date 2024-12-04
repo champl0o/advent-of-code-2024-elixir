@@ -4,7 +4,6 @@ defmodule Scanner do
     |> File.read!()
     |> String.split("\n", trim: true)
     |> Enum.map(&scan_line/1)
-    # Flatten all lines into single list
     |> List.flatten()
     |> process_instructions()
     |> extract_numbers()
