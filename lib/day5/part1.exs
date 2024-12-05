@@ -89,7 +89,7 @@ defmodule RuleApplier do
   end
 end
 
-defmodule MiddleSummer do
+defmodule ArrayMiddleSumCalculator do
   def call(pages_with_applied_rules) do
     pages_with_applied_rules
     |> Enum.map(&find_middle_odd/1)
@@ -110,5 +110,5 @@ parsed_rules = RuleParser.call(rules)
 parsed_pages = PageParser.call(pages)
 pages_with_applied_rules = RuleApplier.call(parsed_rules, parsed_pages)
 
-MiddleSummer.call(pages_with_applied_rules)
+ArrayMiddleSumCalculator.call(pages_with_applied_rules)
 |> IO.inspect()
