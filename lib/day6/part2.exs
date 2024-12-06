@@ -1,193 +1,142 @@
-defmodule Parser do
-  def call(filename) do
-    filename
-    |> File.read!()
-    |> String.split("\n", trim: true)
-    |> Enum.map(&String.split(&1, "", trim: true))
+defmodule GuardRoute do
+  def find_route(start_pos, next_row, next_col, grid) do
+    row_count = length(grid)
+    col_count = length(hd(grid))
+
+    visited =
+      traverse_route(
+        MapSet.new(),
+        start_pos,
+        {next_row, next_col},
+        {row_count, col_count},
+        grid
+      )
+
+    visited
   end
-end
 
-defmodule MovementDetector do
-  @patterns %{
-    "^" => {-1, 0},
-    ">" => {0, 1},
-    "v" => {1, 0},
-    "<" => {0, -1}
-  }
+  defp traverse_route(visited, {curr_row, curr_col} = pos, {next_row, next_col}, dims, grid) do
+    visited = MapSet.put(visited, pos)
 
-  @pattern_order ["^", ">", "v", "<"]
-
-  @dot_pattern "."
-  @obstacle_pattern "#"
-
-  def call(grid) do
-    with {:ok, guard_info} <- find_guard(grid) do
-      guard_info
-      |> start_movement()
-      |> IO.inspect(label: "Final Result")
+    if out_of_bounds?({curr_row + next_row, curr_col + next_col}, dims) do
+      visited
     else
-      nil ->
-        {:error, :no_guard_found}
+      if obstacle_at?(grid, curr_row + next_row, curr_col + next_col) do
+        traverse_route(visited, pos, {next_col, -next_row}, dims, grid)
+      else
+        traverse_route(
+          visited,
+          {curr_row + next_row, curr_col + next_col},
+          {next_row, next_col},
+          dims,
+          grid
+        )
+      end
     end
   end
 
-  defp find_guard(grid) do
+  def find_looped_route(start_pos, next_row, next_col, grid) do
+    row_count = length(grid)
+    col_count = length(hd(grid))
+
+    check_loop(
+      MapSet.new(),
+      start_pos,
+      {next_row, next_col},
+      {row_count, col_count},
+      grid
+    )
+  end
+
+  defp check_loop(visited, {curr_row, curr_col}, {next_row, next_col} = movement, dims, grid) do
+    state = {curr_row, curr_col, next_row, next_col}
+
+    cond do
+      MapSet.member?(visited, state) ->
+        true
+
+      out_of_bounds?({curr_row + next_row, curr_col + next_col}, dims) ->
+        false
+
+      true ->
+        visited = MapSet.put(visited, state)
+
+        if obstacle_at?(grid, curr_row + next_row, curr_col + next_col) do
+          check_loop(visited, {curr_row, curr_col}, {next_col, -next_row}, dims, grid)
+        else
+          check_loop(visited, {curr_row + next_row, curr_col + next_col}, movement, dims, grid)
+        end
+    end
+  end
+
+  def part_one(input) do
+    grid = parse_grid(input)
+    start_pos = find_start_position(grid)
+    visited = find_route(start_pos, -1, 0, grid)
+    MapSet.size(visited)
+  end
+
+  def part_two(input) do
+    grid = parse_grid(input)
+    start_pos = find_start_position(grid)
+    dims = {length(grid), length(hd(grid))}
+
+    for row <- 0..(length(grid) - 1),
+        col <- 0..(length(hd(grid)) - 1),
+        IO.inspect({row, col}),
+        at(grid, row, col) == ".",
+        {row, col} != start_pos,
+        grid_with_obstacle = put_obstacle(grid, row, col),
+        find_looped_route(start_pos, -1, 0, grid_with_obstacle),
+        reduce: 0 do
+      acc -> acc + 1
+    end
+  end
+
+  defp parse_grid(input) do
+    input
+    |> Enum.map(&String.graphemes/1)
+  end
+
+  defp find_start_position(grid) do
     grid
     |> Enum.with_index()
-    |> Enum.find_value(fn {row, x} ->
+    |> Enum.find_value(fn {row, row_idx} ->
       row
       |> Enum.with_index()
-      |> Enum.find_value(fn {cell, y} ->
-        if cell in @pattern_order, do: {:ok, {grid, x, y, cell}}
+      |> Enum.find_value(fn {cell, col_idx} ->
+        if cell == "^", do: {row_idx, col_idx}
       end)
     end)
   end
 
-  defp start_movement({grid, x, y, movement_direction}) do
-    coords = @patterns[movement_direction]
-
-    move([], grid, {x, y}, coords, movement_direction, [])
+  defp out_of_bounds?({row, col}, {row_count, col_count}) do
+    row < 0 or row >= row_count or col < 0 or col >= col_count
   end
 
-  defp move(acc, grid, {x, y}, {dx, dy}, _direction, loop_acc)
-       when x + dx < 0 or y + dy < 0 or x + dx >= length(grid) do
-    {:ok, acc, loop_acc}
+  defp obstacle_at?(grid, row, col) do
+    at(grid, row, col) == "#"
   end
 
-  defp move(acc, grid, {x, y}, {dx, dy}, direction, loop_acc) do
-    IO.inspect({x, y}, label: "Current position")
-    new_pos = {new_x, new_y} = {x + dx, y + dy}
-    IO.inspect(new_pos, label: "New Position")
-
-    with {:ok, cell} <- get_cell(grid, new_x, new_y) do
-      IO.inspect(cell, label: "Current Cell")
-      handle_cell(acc, grid, new_pos, {dx, dy}, cell, direction, loop_acc)
-    else
-      _ ->
-        {:ok, acc, loop_acc}
-    end
+  defp at(grid, row, col) do
+    grid
+    |> Enum.at(row, [])
+    |> Enum.at(col)
   end
 
-  defp get_cell(grid, x, y) do
-    case Enum.at(grid, x) do
-      nil -> :error
-      row -> {:ok, Enum.at(row, y)}
-    end
-  end
-
-  defp handle_cell(acc, grid, {x1, y1}, {dx, dy}, @dot_pattern, direction, loop_acc) do
-    move(acc, grid, {x1, y1}, {dx, dy}, direction, loop_acc)
-  end
-
-  defp handle_cell(acc, grid, {x1, y1}, {dx, dy}, @obstacle_pattern, direction, loop_acc) do
-    IO.inspect({x1, y1}, label: "Obstacle position")
-    IO.inspect(direction, label: "Current direction")
-    previous_position = {x1 - dx, y1 - dy}
-    new_direction = rotate_movement_direction(direction)
-    new_coords = @patterns[new_direction]
-
-    arr_length = length(acc)
-    IO.inspect(arr_length, label: "Array Length")
-
-    if arr_length >= 3 do
-      IO.inspect(previous_position, label: "Current position")
-      IO.inspect({dx, dy}, label: "Direction")
-
-      is_loop? = test_loop(acc, grid, {x1, y1}, {dx, dy}, direction)
-      IO.inspect(is_loop?, label: "Is Loop?")
-
-      if is_loop? == true do
-        [{x1, y1, "#"} | loop_acc]
-      end
-    end
-
-    IO.inspect(acc, label: "Accumulator")
-
-    move(
-      [{x1, y1, @obstacle_pattern} | acc],
-      grid,
-      previous_position,
-      new_coords,
-      new_direction,
-      loop_acc
-    )
-  end
-
-  defp handle_cell(acc, grid, {x1, y1}, {dx, dy}, _, direction, loop_acc) do
-    move(acc, grid, {x1, y1}, {dx, dy}, direction, loop_acc)
-  end
-
-  defp rotate_movement_direction(direction) do
-    index = Enum.find_index(@pattern_order, &(&1 == direction))
-    IO.inspect(Enum.at(@pattern_order, rem(index + 1, length(@pattern_order))))
-    Enum.at(@pattern_order, rem(index + 1, length(@pattern_order)))
-  end
-
-  defp test_loop(new_acc, grid, {x, y}, new_pos, movement_direction) do
-    case test_loop_iterations(new_acc, grid, new_pos, movement_direction, 1) do
-      {:cycle_found, _grid} ->
-        IO.puts("=== Loop Found! ===")
-        true
-
-      {:no_cycle, _grid} ->
-        IO.puts("=== No Loop Found ===")
-        false
-
-      other ->
-        IO.puts("=== Unexpected Result ===")
-        IO.inspect(other)
-    end
-  end
-
-  defp test_loop_iterations(acc, grid, coords, direction, iteration) do
-    if iteration < 50 do
-      IO.inspect(iteration, label: "Iteration")
-      new_x = elem(coords, 0)
-      new_y = elem(coords, 1)
-      value = Enum.find([new_x, new_y], &(&1 != 0))
-
-      final_destination = Enum.at(acc, 2)
-      last_obstacle = Enum.at(acc, 0)
-
-      next_direction = rotate_movement_direction(direction)
-      new_coords = @patterns[next_direction]
-
-      obstacle_x = elem(last_obstacle, 0) + value
-      obstacle_y = elem(final_destination, 1) + value
-      current_pos = {obstacle_x, obstacle_y}
-      initial_pos = {elem(last_obstacle, 0), elem(last_obstacle, 1)}
-      # IO.inspect(current_pos, label: "Current position")
-      # IO.inspect(initial_pos, label: "Initial position")
-
-      updated_grid = GridUpdater.replace_at(grid, obstacle_x, obstacle_y, @obstacle_pattern)
-
-      res =
-        if current_pos == initial_pos do
-          # IO.puts("=== Complete Loop Found! ===")
-          {:cycle_found, updated_grid}
-        else
-          # IO.puts("=== No Complete Loop ===")
-          {:no_cycle, grid}
-        end
-
-      case res do
-        {:cycle_found, _} -> res
-        {:no_cycle, _} -> test_loop_iterations(acc, grid, new_coords, direction, iteration + 1)
-      end
-    else
-      {:no_cycle, grid}
-    end
-  end
-end
-
-defmodule GridUpdater do
-  def replace_at(grid, x, y, new_value) do
-    List.update_at(grid, x, fn row ->
-      List.update_at(row, y, fn _current_value -> new_value end)
+  defp put_obstacle(grid, row, col) do
+    List.update_at(grid, row, fn line ->
+      List.update_at(line, col, fn _ -> "#" end)
     end)
   end
 end
 
-"lib/day6/experimental_input.txt"
-|> Parser.call()
-|> MovementDetector.call()
+# Usage
+input =
+  File.read!("lib/day6/day6input.txt")
+  |> String.split("\n", trim: true)
+
+IO.puts("Part 1: #{GuardRoute.part_one(input)}")
+{time, result} = :timer.tc(fn -> GuardRoute.part_two(input) end)
+IO.puts("Part 2: #{result}")
+IO.puts("Executed in #{time / 1_000_000} seconds")
